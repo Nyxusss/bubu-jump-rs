@@ -3312,14 +3312,13 @@ impl Game {
         g.restore();
     }
     fn sel_row(&mut self, g: &mut Painter, ox: f32, y: f32, label: &str, id_l: u8, id_r: u8) {
-        let cx = ox + BASE_W / 2.0;
-        g.txt(label, cx, y, 22.0, INK, 1, 0.0);
-        for (s, id) in [(-1.0f32, id_l), (1.0, id_r)] {
-            let x = cx + s * 120.0;
-            g.fcirc(x, y, 14.0, "#ffffff", 2.0);
-            g.stroke(&[vec2(x - s * 3.0, y - 6.0), vec2(x + s * 3.0, y), vec2(x - s * 3.0, y + 6.0)], 2.4, INK, false);
-            self.btns.push(Btn { x: x - 20.0, y: y - 18.0, w: 40.0, h: 36.0, id });
+        g.fr(ox + 40.0, y, 280.0, 34.0, 12.0, "#ffffff", 2.0);
+        g.txt(label, ox + BASE_W / 2.0, y + 18.0, 22.0, INK, 1, 0.0);
+        for (s, x) in [(-1.0f32, ox + 58.0), (1.0, ox + 302.0)] {
+            g.stroke(&[vec2(x - s * 3.5, y + 9.0), vec2(x + s * 3.5, y + 17.0), vec2(x - s * 3.5, y + 25.0)], 2.6, INK, false);
         }
+        self.btns.push(Btn { x: ox + 40.0, y, w: 90.0, h: 34.0, id: id_l });
+        self.btns.push(Btn { x: ox + 130.0, y, w: 190.0, h: 34.0, id: id_r });
     }
 
     fn menu(&mut self, g: &mut Painter) {
