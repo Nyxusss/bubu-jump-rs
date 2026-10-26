@@ -8,13 +8,13 @@ name = "bubu-jump"
 path = "main.rs"
 
 [dependencies]
-macroquad = { version = "0.4", default-features = false }
+macroquad = { version = "0.4", features = ["audio"] }
+libc = "0.2"
 
 [profile.release]
 opt-level = 3
 lto = true
 codegen-units = 1
-panic = "abort"
 strip = true
 
 [package.metadata.android]
