@@ -8,3 +8,10 @@ Juego de saltos estilo Doodle Jump. Nació en HTML, después se portó a Godot (
 
 ## Descargar
 Ve a la pestaña **Actions**, abre la última compilación y descarga el APK en **Artifacts**.
+
+## Créditos
+- Desarrollo: Nyxusss
+- Port a Rust: Nyxusss con ayuda de Claude (Anthropic)
+- Fuente: Gochi Hand (SIL Open Font License)
+
+Co-Authored-By: Claude <noreply@anthropic.com>
