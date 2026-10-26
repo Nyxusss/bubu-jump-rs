@@ -1,0 +1,27 @@
+[package]
+name = "bubu-jump"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "bubu-jump"
+path = "main.rs"
+
+[dependencies]
+macroquad = { version = "0.4", default-features = false }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[package.metadata.android]
+package_name = "com.nyxusss.bubujump"
+label = "Bubu Jump"
+fullscreen = true
+build_targets = ["aarch64-linux-android", "armv7-linux-androideabi"]
+
+[package.metadata.android.activity_attributes]
+"android:screenOrientation" = "portrait"
