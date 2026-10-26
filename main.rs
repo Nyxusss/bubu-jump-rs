@@ -1105,10 +1105,31 @@ impl Game {
 
     fn gen(&mut self) {
         for i in 0..self.chains.len() {
-            while self.chains[i].y > -60.0 {
+            let mut guard = 0;
+            while self.chains[i].y > -60.0 && guard < 60 {
                 self.gen_one(i);
+                guard += 1;
             }
         }
+    }
+    // cambio de tamaño a mitad de partida: conserva lo ya generado
+    fn resize_chains(&mut self) {
+        let n = if self.w > 950.0 { 3 } else if self.w > 600.0 { 2 } else { 1 };
+        let lw = self.w / n as f32;
+        let top = self.chains.iter().map(|c| c.y).fold(self.h - 60.0, f32::min);
+        let mut out = vec![];
+        for i in 0..n {
+            let (l0, l1) = (i as f32 * lw, (i + 1) as f32 * lw);
+            let best = self.plats.iter()
+                .filter(|p| !p.broken && !p.gone && p.x + 29.0 >= l0 && p.x + 29.0 < l1)
+                .min_by(|a, b| a.y.partial_cmp(&b.y).unwrap());
+            let (y, x, t) = match best {
+                Some(p) => (p.y, p.x.clamp(l0, (l1 - 58.0).max(l0)), p.t),
+                None => (top, l0 + lw / 2.0 - 29.0, PT::G),
+            };
+            out.push(Chain { y, x, t, l0, l1 });
+        }
+        self.chains = out;
     }
 
     fn gen_one(&mut self, ci: usize) {
@@ -3889,18 +3910,24 @@ async fn main() {
         let (sw, sh) = (screen_width(), screen_height());
         let scale = (sw / BASE_W).min(sh / BASE_H);
         let (nw, nh) = (sw / scale, sh / scale);
-        if (nw - g.w).abs() > 0.5 || (nh - g.h).abs() > 0.5 {
+        // al volver a la app la ventana puede reportar tamaños falsos un instante: se ignoran
+        if sw > 100.0 && sh > 100.0 && ((nw - g.w).abs() > 0.5 || (nh - g.h).abs() > 0.5) {
             g.w = nw;
             g.h = nh;
-            if g.state == State::Play {
-                g.setup_chains();
+            if matches!(g.state, State::Play | State::Pause | State::Over) {
+                g.resize_chains();
             }
         }
         pt.px = 1.0;
         set_default_camera();
         let to_world = |p: Vec2| p / scale;
 
-        let dt = get_frame_time().min(1.0 / 20.0);
+        let raw_dt = get_frame_time();
+        let dt = raw_dt.min(1.0 / 20.0);
+        // la app estuvo en segundo plano: pausar en vez de seguir
+        if raw_dt > 0.5 && g.state == State::Play {
+            g.state = State::Pause;
+        }
         g.time += dt;
         g.swap_t = (g.swap_t - dt * 2.0).max(0.0);
         g.toast.1 = (g.toast.1 - dt).max(0.0);

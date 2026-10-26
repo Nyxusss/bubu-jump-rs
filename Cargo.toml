@@ -13,15 +13,16 @@ libc = "0.2"
 
 [profile.release]
 opt-level = 3
-lto = true
-codegen-units = 1
+lto = "thin"
 strip = true
 
 [package.metadata.android]
 package_name = "com.nyxusss.bubujump"
 label = "Bubu Jump"
 fullscreen = true
-build_targets = ["aarch64-linux-android", "armv7-linux-androideabi"]
+res = "android_res"
+icon = "@mipmap/ic_launcher"
+build_targets = ["aarch64-linux-android"]
 
 [package.metadata.android.activity_attributes]
 "android:screenOrientation" = "portrait"
