@@ -13,5 +13,3 @@ Ve a la pestaña **Actions**, abre la última compilación y descarga el APK en 
 - Desarrollo: Nyxusss
 - Port a Rust: Nyxusss con ayuda de Claude (Anthropic)
 - Fuente: Gochi Hand (SIL Open Font License)
-
-Co-Authored-By: Claude <noreply@anthropic.com>
