@@ -3,6 +3,7 @@ on: [push, workflow_dispatch]
 
 env:
   NDK_VERSION: "28.2.13676358"
+  CQA_REV: "bdb61325ce1aecf09ed8969690f53c86c846c118"
 
 jobs:
   android:
@@ -10,10 +11,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Rust + targets de Android
+      - name: Rust + target de Android
         run: |
           rustup default 1.95.0
-          rustup target add aarch64-linux-android armv7-linux-androideabi
+          rustup target add aarch64-linux-android
+
+      # guarda dependencias ya compiladas entre ejecuciones
+      - uses: Swatinem/rust-cache@v2
+
+      # guarda cargo-quad-apk para no compilarlo cada vez
+      - name: Caché de cargo-quad-apk
+        id: cqa
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-quad-apk
+          key: cqa-${{ env.CQA_REV }}-1.95.0
+
+      - name: Instalar cargo-quad-apk
+        if: steps.cqa.outputs.cache-hit != 'true'
+        run: cargo install --git https://github.com/hoklims/cargo-quad-apk --rev ${{ env.CQA_REV }} --locked cargo-quad-apk
 
       - name: SDK y NDK de Android
         uses: android-actions/setup-android@v3
@@ -25,8 +41,10 @@ jobs:
           echo "NDK_HOME=${ANDROID_SDK_ROOT}/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
           echo "ANDROID_HOME=${ANDROID_SDK_ROOT}" >> "$GITHUB_ENV"
 
-      - name: Instalar cargo-quad-apk
-        run: cargo install --git https://github.com/hoklims/cargo-quad-apk --rev bdb61325ce1aecf09ed8969690f53c86c846c118 --locked cargo-quad-apk
+      - name: Ícono de la app
+        run: |
+          mkdir -p android_res/mipmap-xxxhdpi
+          cp icon.png android_res/mipmap-xxxhdpi/ic_launcher.png
 
       - name: Compilar APK
         run: cargo quad-apk build --release
