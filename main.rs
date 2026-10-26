@@ -1621,8 +1621,8 @@ async fn main() {
                 g.setup_chains();
             }
         }
-        pt.px = scale;
-        set_camera(&Camera2D::from_display_rect(Rect::new(0.0, 0.0, g.w, g.h)));
+        pt.px = 1.0;
+        set_default_camera();
         let to_world = |p: Vec2| p / scale;
 
         let dt = get_frame_time().min(1.0 / 20.0);
@@ -1738,7 +1738,7 @@ async fn main() {
         // ---- dibujo ----
         clear_background(hx("#2b2420"));
         g.btns.clear();
-        pt.m = Affine2::IDENTITY;
+        pt.m = Affine2::from_scale(vec2(scale, scale));
         pt.ga = 1.0;
         pt.stack.clear();
         match g.state {
