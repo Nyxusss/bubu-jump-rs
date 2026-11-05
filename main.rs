@@ -1,5 +1,7 @@
 // Bubu Jump — port a Rust/macroquad (fase 1: núcleo jugable)
 // Valores y reglas tomados de game.gd (versión Godot 4.7.2).
+// sin consola negra detrás de la ventana en Windows
+#![windows_subsystem = "windows"]
 use macroquad::prelude::*;
 use std::f32::consts::{PI, TAU};
 
@@ -780,6 +782,99 @@ fn pc(t: PT) -> (&'static str, &'static str) {
 }
 
 // ---------- guardado ----------
+// ---------- puente con Java (solo Android) ----------
+#[cfg(target_os = "android")]
+mod droid {
+    use macroquad::miniquad::native::android::{attach_jni_env, ndk_sys, ACTIVITY};
+    use std::ffi::CString;
+
+    // busca un método de la MainActivity; si no existe limpia la excepción y da null
+    unsafe fn method(env: *mut ndk_sys::JNIEnv, name: &str, sig: &str) -> ndk_sys::jmethodID {
+        let cls = ((**env).GetObjectClass.unwrap())(env, ACTIVITY);
+        let (n, s) = (CString::new(name).unwrap(), CString::new(sig).unwrap());
+        let m = ((**env).GetMethodID.unwrap())(env, cls, n.as_ptr(), s.as_ptr());
+        ((**env).DeleteLocalRef.unwrap())(env, cls);
+        if ((**env).ExceptionCheck.unwrap())(env) != 0 {
+            ((**env).ExceptionClear.unwrap())(env);
+            return std::ptr::null_mut();
+        }
+        m
+    }
+
+    static mut TILT_M: ndk_sys::jmethodID = std::ptr::null_mut();
+    static mut TILT_OK: bool = true;
+
+    /// inclinación lateral del celular en m/s² (eje x del acelerómetro)
+    pub fn tilt() -> f32 {
+        unsafe {
+            if !TILT_OK {
+                return 0.0;
+            }
+            let env = attach_jni_env();
+            if TILT_M.is_null() {
+                TILT_M = method(env, "getTiltX", "()F");
+                if TILT_M.is_null() {
+                    TILT_OK = false;
+                    return 0.0;
+                }
+            }
+            ((**env).CallFloatMethod.unwrap())(env, ACTIVITY, TILT_M)
+        }
+    }
+
+    /// manda el PNG a la galería y abre el menú de compartir
+    pub fn share(path: &str) -> bool {
+        unsafe {
+            let env = attach_jni_env();
+            let m = method(env, "shareImage", "(Ljava/lang/String;)Z");
+            if m.is_null() {
+                return false;
+            }
+            let c = CString::new(path).unwrap();
+            let js = ((**env).NewStringUTF.unwrap())(env, c.as_ptr());
+            let ok = ((**env).CallBooleanMethod.unwrap())(env, ACTIVITY, m, js);
+            ((**env).DeleteLocalRef.unwrap())(env, js);
+            if ((**env).ExceptionCheck.unwrap())(env) != 0 {
+                ((**env).ExceptionClear.unwrap())(env);
+                return false;
+            }
+            ok != 0
+        }
+    }
+}
+
+// guarda la captura y la comparte (Android) o la deja en Imágenes (PC)
+fn share_png(img: &mut Image) -> Result<String, ()> {
+    for px in img.bytes.chunks_mut(4) {
+        px[3] = 255;
+    }
+    #[cfg(target_os = "android")]
+    {
+        let d = std::path::PathBuf::from("/data/data/com.nyxusss.bubujump/files");
+        let _ = std::fs::create_dir_all(&d);
+        let p = d.join("share.png").to_string_lossy().to_string();
+        return if write_png(img, &p) && droid::share(&p) { Ok(String::new()) } else { Err(()) };
+    }
+    #[allow(unreachable_code)]
+    {
+        let home = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).map(std::path::PathBuf::from).unwrap_or_else(|_| ".".into());
+        let pics = ["Pictures", "Imágenes"].iter().map(|d| home.join(d)).find(|d| d.is_dir()).unwrap_or(home);
+        let p = pics.join(format!("bubu_jump_{}.png", now_secs()));
+        let ps = p.to_string_lossy().to_string();
+        if write_png(img, &ps) { Ok(ps) } else { Err(()) }
+    }
+}
+
+// como Image::export_png pero sin panic si falla (filas de abajo hacia arriba)
+fn write_png(img: &Image, path: &str) -> bool {
+    let row = img.width as usize * 4;
+    let mut out = Vec::with_capacity(img.bytes.len());
+    for r in img.bytes.chunks(row).rev() {
+        out.extend_from_slice(r);
+    }
+    image::save_buffer(path, &out, img.width as u32, img.height as u32, image::ColorType::Rgba8).is_ok()
+}
+
 fn save_path() -> std::path::PathBuf {
     #[cfg(target_os = "android")]
     {
@@ -795,11 +890,11 @@ fn save_path() -> std::path::PathBuf {
 }
 
 struct Save { coins: i64, dudu: bool, mode: usize, dif: usize, bests: Vec<(String, i64)>, own: Vec<String>, eq: Vec<(String, String)>, pw: Vec<String>,
-    st: Vec<(String, i64)>, ach: Vec<String>, dday: i64, mis: Vec<Mis>, streak: i64, sday: i64, chest_day: i64, music: bool, mode_list: Vec<String> }
+    st: Vec<(String, i64)>, ach: Vec<String>, dday: i64, mis: Vec<Mis>, streak: i64, sday: i64, chest_day: i64, music: bool, mode_list: Vec<String>, gyro: bool, gsens: f32, paper_fx: bool }
 impl Save {
     fn load() -> Save {
         let mut s = Save { coins: 0, dudu: false, mode: 0, dif: 1, bests: vec![], own: vec![], eq: vec![], pw: vec![],
-            st: vec![], ach: vec![], dday: -1, mis: vec![], streak: 0, sday: -1, chest_day: -1, music: true, mode_list: vec![] };
+            st: vec![], ach: vec![], dday: -1, mis: vec![], streak: 0, sday: -1, chest_day: -1, music: true, mode_list: vec![], gyro: false, gsens: 1.0, paper_fx: true };
         if let Ok(txt) = std::fs::read_to_string(save_path()) {
             for l in txt.lines() {
                 if let Some((k, v)) = l.split_once('=') {
@@ -825,6 +920,10 @@ impl Save {
                         }
                         _ => {}
                     }
+                    if k == "gsens" {
+                        s.gsens = v.trim().parse::<f32>().unwrap_or(1.0).clamp(0.3, 3.0);
+                        continue;
+                    }
                     if let Some(c) = k.strip_prefix("st_") {
                         s.st.push((c.to_string(), v.trim().parse().unwrap_or(0)));
                         continue;
@@ -846,6 +945,8 @@ impl Save {
                         "sday" => s.sday = n,
                         "chest" => s.chest_day = n,
                         "music" => s.music = n == 1,
+                        "gyro" => s.gyro = n == 1,
+                        "paper_fx" => s.paper_fx = n == 1,
                         _ if k.starts_with("best") => s.bests.push((k.to_string(), n)),
                         _ => {}
                     }
@@ -863,6 +964,7 @@ impl Save {
         o += &format!("ach={}\nmodes_list={}\ndday={}\nstreak={}\nsday={}\nchest={}\nmusic={}\n", self.ach.join(","), self.mode_list.join(","), self.dday, self.streak, self.sday, self.chest_day, self.music as i32);
         let ms: Vec<String> = self.mis.iter().map(|m| format!("{}:{}:{}:{}:{}", m.k, m.n, m.p, m.r, m.c as i32)).collect();
         o += &format!("mis={}\n", ms.join(";"));
+        o += &format!("gyro={}\ngsens={:.2}\npaper_fx={}\n", self.gyro as i32, self.gsens, self.paper_fx as i32);
         for (k, v) in &self.st {
             o += &format!("st_{}={}\n", k, v);
         }
@@ -990,6 +1092,10 @@ struct Game {
     sfx_q: Vec<&'static str>,
     mag_snd_t: f32,
     fullscreen: bool,
+    tilt: f32,
+    slider: Option<(f32, f32, f32)>,
+    share_req: bool,
+    shutter: f32,
 }
 
 impl Game {
@@ -1004,7 +1110,7 @@ impl Game {
             bag: vec![], drops: vec![], rocks: vec![], warns: vec![], bolts: vec![], note: None, gm: 1.0, lost: vec![], revives: 0,
             safe_x: BASE_W / 2.0, safe_y: BASE_H - 60.0, shop_tab: 0, shop_sel: String::new(), toast: (String::new(), 0.0), night_noted: false,
             banners: vec![], chest_t: -1.0, chest_prize: (String::new(), String::new(), 0), ach_t: 0.0, opt_back: State::Menu, sfx_q: vec![],
-            mag_snd_t: 0.0, fullscreen: false,
+            mag_snd_t: 0.0, fullscreen: false, tilt: 0.0, slider: None, share_req: false, shutter: 0.0,
         };
         g.refresh_day();
         g.build_safe_tab();
@@ -1534,9 +1640,9 @@ impl Game {
         }
     }
     fn reset_progress(&mut self) {
-        let music = self.sv.music;
+        let (music, gyro, gsens, paper_fx) = (self.sv.music, self.sv.gyro, self.sv.gsens, self.sv.paper_fx);
         self.sv = Save { coins: 0, dudu: false, mode: 0, dif: 1, bests: vec![], own: vec![], eq: vec![], pw: vec![],
-            st: vec![], ach: vec![], dday: -1, mis: vec![], streak: 0, sday: -1, chest_day: -1, music, mode_list: vec![] };
+            st: vec![], ach: vec![], dday: -1, mis: vec![], streak: 0, sday: -1, chest_day: -1, music, mode_list: vec![], gyro, gsens, paper_fx };
         self.refresh_day();
         self.sv.write();
         self.state = State::Opts;
@@ -2142,6 +2248,13 @@ impl Game {
         }
         if is_key_down(KeyCode::Right) || is_key_down(KeyCode::D) {
             d += 1.0;
+        }
+        if self.sv.gyro {
+            // ~4 m/s² de inclinación = velocidad máxima con sensibilidad 1
+            let t = -self.tilt * self.sv.gsens / 4.0;
+            if t.abs() > 0.06 {
+                d += t;
+            }
         }
         (d + self.touch_dir).clamp(-1.0, 1.0)
     }
@@ -3273,7 +3386,8 @@ impl Game {
         g.save();
         g.ga = 0.12;
         let (w, h) = (self.w, self.h);
-        for x in [w / 3.0, w * 2.0 / 3.0] {
+        let gyro = self.sv.gyro;
+        for x in [w / 3.0, w * 2.0 / 3.0].into_iter().filter(|_| !gyro) {
             let mut yy = 48.0;
             while yy < h {
                 g.ln(x, yy, x, yy + 6.0, 1.6, INK);
@@ -3281,6 +3395,9 @@ impl Game {
             }
         }
         for (z, x) in [(-1i32, w / 6.0), (0, w / 2.0), (1, w * 5.0 / 6.0)] {
+            if gyro && z != 0 {
+                continue;
+            }
             let on = self.zones[(z + 1) as usize];
             g.ga = if on { 0.75 } else { 0.28 };
             g.fcirc(x, y, 19.0, if on { "#f3d23c" } else { "#ffffff" }, 2.0);
@@ -3334,6 +3451,26 @@ impl Game {
             self.fx(x, y, 1, &STARC, 20.0, -20.0, 1.2, 0.8, K_STAR, 0.0);
         }
         self.paint_parts(g);
+        // pantalla ancha (PC): plataformas y monedas a los lados para llenar el ancho
+        if ox > 40.0 {
+            let kinds = [PT::G, PT::B, PT::G, PT::W, PT::K, PT::G];
+            for side in 0..2usize {
+                let (x0, x1) = if side == 0 { (0.0, ox) } else { (ox + BASE_W, self.w) };
+                let span = (x1 - x0 - 100.0).max(1.0);
+                let n = ((self.h / 105.0) as usize).max(3);
+                for i in 0..n {
+                    let fi = (i * 7 + side * 3) as f32;
+                    let x = x0 + 20.0 + fposmod(fi * 53.0 + side as f32 * 31.0, span);
+                    let y = 100.0 + i as f32 * (self.h - 150.0) / n as f32 + (self.time * 1.3 + fi).sin() * 5.0;
+                    let p = self.mk(x, y, kinds[(i + side) % kinds.len()]);
+                    self.plat(g, &p);
+                    if (i + side) % 3 == 0 {
+                        let c = Coin { x: x + 29.0, y: y - 26.0, ph: self.time * 3.0 + fi, got: false, vy: 0.0, mag: false };
+                        self.coin(g, &c);
+                    }
+                }
+            }
+        }
         let by = 430.0 - (self.time * 3.2).sin().abs() * 120.0;
         let p0 = self.mk(cx - 29.0, 432.0, PT::G);
         self.plat(g, &p0);
@@ -3419,6 +3556,53 @@ impl Game {
         }
         self.button(g, "otra vez", cx - 85.0, 400.0, 170.0, 0, "#86d443");
         self.button(g, "menú", cx - 85.0, 452.0, 170.0, 6, "#ffffff");
+        self.button(g, "compartir", cx - 85.0, 504.0, 170.0, 69, "#6cc3ee");
+        g.restore();
+        if self.shutter > 0.0 {
+            g.rect(0.0, 0.0, self.w, self.h, Color::new(1.0, 1.0, 1.0, self.shutter * 0.8));
+        }
+    }
+
+    // tarjeta que se guarda como imagen al compartir
+    fn share_card(&self, g: &mut Painter) {
+        let ox = (self.w - BASE_W) / 2.0;
+        let cx = self.w / 2.0;
+        g.save();
+        g.ga = 0.6;
+        g.rect(0.0, 0.0, self.w, self.h, hx("#f8f0e3"));
+        g.restore();
+        let (px, py, pw, ph) = (ox + 22.0, 60.0, BASE_W - 44.0, 520.0);
+        g.fr(px, py + 6.0, pw, ph, 22.0, "#3b242033", 0.0);
+        g.fr(px, py, pw, ph, 22.0, "#fffaf2", 0.0);
+        g.stroke(&rr_pts(px, py, pw, ph, 22.0), 2.6, INK, true);
+        let name = if self.sv.dudu { "dudu" } else { "bubu" };
+        self.title(g, name, cx - 64.0, 112.0, 50.0, -0.06);
+        self.title(g, "jump", cx + 62.0, 124.0, 48.0, 0.05);
+        g.txt("puntos", cx, 180.0, 22.0, "#7a6355", 1, 0.0);
+        self.title(g, &(self.score.floor() as i64).to_string(), cx, 228.0, 70.0, -0.03);
+        g.txt(&format!("{} m   ·   combo máx x{}", self.alt_m(), self.run_max_combo), cx, 282.0, 22.0, INK, 1, 0.0);
+        g.txt(&format!("modo {}   ·   nivel {}", MODES[self.sv.mode].1, DIFS[self.sv.dif].0), cx, 310.0, 19.0, "#7a6355", 1, 0.0);
+        if self.new_best {
+            g.save();
+            g.tr(cx, 340.0);
+            g.rot(-0.04);
+            g.txt("¡nuevo récord!", 0.0, 0.0, 24.0, "#e8504a", 1, 0.0);
+            g.restore();
+        }
+        for (i, (sx, sy)) in [(-92.0f32, 400.0f32), (96.0, 386.0), (-70.0, 488.0), (84.0, 478.0)].iter().enumerate() {
+            g.star(cx + sx, *sy, 7.0, i as f32, STARC[i % STARC.len()]);
+        }
+        let p0 = self.mk(cx - 29.0, 492.0, PT::G);
+        self.plat(g, &p0);
+        g.save();
+        g.tr(cx, 490.0);
+        g.sc(1.25, 1.25);
+        self.bubu(g, 0.0, 0.0, 1.0, 0.0, false, 0.0, Item::None, &self.sv.look(), 0.0, false, false);
+        g.restore();
+        g.save();
+        g.tr(cx, 550.0);
+        g.rot(0.03);
+        g.txt("¿me superas?", 0.0, 0.0, 30.0, "#e8504a", 1, 5.0);
         g.restore();
     }
 
@@ -3749,6 +3933,32 @@ impl Game {
         let mu = self.sv.music;
         self.button(g, &format!("música: {}", yn(mu)), bx, y, 264.0, 61, if mu { "#86d443" } else { "#ffffff" });
         y += st;
+        self.slider = None;
+        if cfg!(target_os = "android") {
+            let gy = self.sv.gyro;
+            self.button(g, &format!("giroscopio: {}", yn(gy)), bx, y, 264.0, 67, if gy { "#86d443" } else { "#ffffff" });
+            y += st;
+            // barra de sensibilidad (0.4x a 2.5x)
+            let k = (self.sv.gsens - 0.4) / 2.1;
+            g.save();
+            if !gy {
+                g.ga *= 0.4;
+            }
+            g.txt(&format!("sensibilidad: {:.1}x", self.sv.gsens), cx, y + 8.0, 20.0, INK, 1, 0.0);
+            let (tx, ty, tw) = (bx + 14.0, y + 30.0, 236.0);
+            g.fr(tx, ty - 4.0, tw, 8.0, 4.0, "#ffffff", 1.8);
+            g.fr(tx, ty - 4.0, tw * k, 8.0, 4.0, "#6cc3ee", 0.0);
+            g.stroke(&rr_pts(tx, ty - 4.0, tw, 8.0, 4.0), 1.8, INK, true);
+            g.fcirc(tx + tw * k, ty, 11.0, "#f3d23c", 2.2);
+            g.restore();
+            if gy {
+                self.slider = Some((tx, ty, tw));
+            }
+            y += st;
+        }
+        let pf = self.sv.paper_fx;
+        self.button(g, &format!("efecto papel: {}", yn(pf)), bx, y, 264.0, 68, if pf { "#86d443" } else { "#ffffff" });
+        y += st;
         self.button(g, "restablecer opciones", bx, y, 264.0, 62, "#6cc3ee");
         y += st;
         self.button(g, "borrar progreso", bx, y, 264.0, 63, "#f7b2ae");
@@ -3756,7 +3966,7 @@ impl Game {
         let vy = y + 14.0;
         self.button(g, "volver", cx - 80.0, vy, 160.0, 64, "#ffffff");
         g.txt(&format!("mejor: {}   monedas: {}", self.sv.best(), self.sv.coins), cx, vy + 76.0, 20.0, INK, 1, 0.0);
-        let hint = if self.touch_ui { "toca: izquierda · centro dispara · derecha" } else { "flechas o A D mover · espacio disparar · P pausa · F11" };
+        let hint = if self.touch_ui && self.sv.gyro { "inclina para moverte · toca para disparar" } else if self.touch_ui { "toca: izquierda · centro dispara · derecha" } else { "flechas o A D mover · espacio disparar · P pausa · F11" };
         g.txt(hint, cx, vy + 104.0, 16.0, "#7a6355", 1, 0.0);
         let look = self.sv.look();
         self.bubu(g, cx, 616.0 + (self.time * 3.0).sin() * 2.0, 1.0, 0.0, false, 0.0, Item::None, &look, 0.0, false, false);
@@ -3845,6 +4055,9 @@ impl Game {
             }
             62 => {
                 self.sv.music = true;
+                self.sv.gyro = false;
+                self.sv.gsens = 1.0;
+                self.sv.paper_fx = true;
                 self.sv.write();
                 self.toast("opciones restablecidas");
             }
@@ -3852,6 +4065,15 @@ impl Game {
             64 => self.state = self.opt_back,
             65 => self.reset_progress(),
             66 => self.state = State::Opts,
+            67 => {
+                self.sv.gyro = !self.sv.gyro;
+                self.sv.write();
+            }
+            68 => {
+                self.sv.paper_fx = !self.sv.paper_fx;
+                self.sv.write();
+            }
+            69 => self.share_req = true,
             70 => self.open_chest(),
             71..=73 => self.claim_mis((id - 71) as usize),
             74 => {
@@ -3863,6 +4085,18 @@ impl Game {
         if (1..=5).contains(&id) {
             self.sv.write();
         }
+    }
+
+    // arrastrar la barra de sensibilidad; true si el punto cae en ella
+    fn slide(&mut self, p: Vec2) -> bool {
+        if let Some((x, y, w)) = self.slider {
+            if p.y > y - 22.0 && p.y < y + 22.0 && p.x > x - 20.0 && p.x < x + w + 20.0 {
+                let k = ((p.x - x) / w).clamp(0.0, 1.0);
+                self.sv.gsens = ((0.4 + k * 2.1) * 10.0).round() / 10.0;
+                return true;
+            }
+        }
+        false
     }
 
     fn click(&mut self, p: Vec2) -> bool {
@@ -3885,14 +4119,83 @@ fn window_conf() -> Conf {
     let fs = std::env::args().any(|a| a == "--fullscreen" || a == "-f");
     Conf {
         window_title: "Bubu Jump".to_owned(),
-        window_width: 540,
-        window_height: 960,
+        // BUBU_SIZE=1366x768 solo para pruebas
+        window_width: std::env::var("BUBU_SIZE").ok().and_then(|v| v.split('x').next()?.parse().ok()).unwrap_or(540),
+        window_height: std::env::var("BUBU_SIZE").ok().and_then(|v| v.split('x').nth(1)?.parse().ok()).unwrap_or(960),
         fullscreen: fs || cfg!(target_os = "android"),
         high_dpi: true,
         sample_count: 2,
         icon: None,
         ..Default::default()
     }
+}
+
+// ---------- efecto papel (post-proceso del shader de Godot) ----------
+// ondulación por celdas con interpolación suave, grano, fibra y viñeta
+const FX_VERT: &str = r#"#version 100
+attribute vec3 position;
+attribute vec2 texcoord;
+attribute vec4 color0;
+varying lowp vec2 uv;
+uniform mat4 Model;
+uniform mat4 Projection;
+void main() {
+    gl_Position = Projection * Model * vec4(position, 1.0);
+    uv = texcoord;
+}
+"#;
+const FX_FRAG: &str = r#"#version 100
+#ifdef GL_FRAGMENT_PRECISION_HIGH
+precision highp float;
+#else
+precision mediump float;
+#endif
+varying lowp vec2 uv;
+uniform sampler2D Texture;
+uniform vec2 res;
+uniform float t;
+uniform float fy;
+float h(vec2 p) {
+    p = fract(p * vec2(0.1031, 0.1030));
+    p += dot(p, p.yx + 33.33);
+    return fract((p.x + p.y) * p.x);
+}
+float n2(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(h(i), h(i + vec2(1.0, 0.0)), f.x), mix(h(i + vec2(0.0, 1.0)), h(i + vec2(1.0, 1.0)), f.x), f.y);
+}
+void main() {
+    vec2 q = vec2(uv.x, fy > 0.5 ? 1.0 - uv.y : uv.y);
+    vec2 w = q * res;
+    vec2 c = w / 30.0 + vec2(t * 0.35, -t * 0.25);
+    vec2 off = vec2(n2(c), n2(c + 17.3)) - 0.5;
+    vec2 su = uv + off * 2.2 / res * vec2(1.0, fy > 0.5 ? -1.0 : 1.0);
+    vec3 col = texture2D(Texture, su).rgb;
+    float gr = h(floor(w * 1.5) + floor(t * 12.0) * 7.0) - 0.5;
+    col += gr * 0.04;
+    float fib = n2(vec2(w.x * 0.06, w.y * 0.9)) - 0.5;
+    col -= fib * 0.03;
+    vec2 v = q - 0.5;
+    col *= 1.0 - dot(v, v) * 0.42;
+    gl_FragColor = vec4(col, 1.0);
+}
+"#;
+
+fn paper_material() -> Option<Material> {
+    load_material(
+        ShaderSource::Glsl { vertex: FX_VERT, fragment: FX_FRAG },
+        MaterialParams {
+            uniforms: vec![
+                UniformDesc::new("res", UniformType::Float2),
+                UniformDesc::new("t", UniformType::Float1),
+                UniformDesc::new("fy", UniformType::Float1),
+            ],
+            ..Default::default()
+        },
+    )
+    .ok()
 }
 
 #[macroquad::main(window_conf)]
@@ -3904,6 +4207,8 @@ async fn main() {
     let mut acc = 0.0f32;
     let shot_path = std::env::var("BUBU_SHOT").ok();
     let mut frames = 0u32;
+    let fx_mat = paper_material();
+    let mut fx_rt: Option<RenderTarget> = None;
 
     loop {
         let (sw, sh) = (screen_width(), screen_height());
@@ -3938,6 +4243,11 @@ async fn main() {
             g.act(60);
         }
 
+        #[cfg(target_os = "android")]
+        {
+            g.tilt = if g.sv.gyro && g.state == State::Play { droid::tilt() } else { 0.0 };
+        }
+
         // ---- entrada táctil ----
         let ts = touches();
         g.touch_dir = 0.0;
@@ -3948,6 +4258,16 @@ async fn main() {
         }
         for t in &ts {
             let wp = to_world(t.position);
+            if g.state == State::Opts && g.slider.is_some() {
+                if t.phase == TouchPhase::Ended {
+                    if g.slide(wp) {
+                        g.sv.write();
+                        continue;
+                    }
+                } else if g.slide(wp) {
+                    continue;
+                }
+            }
             if t.phase == TouchPhase::Started && g.state != State::Play && g.click(wp) {
                 continue;
             }
@@ -3956,7 +4276,7 @@ async fn main() {
                     continue;
                 }
                 if matches!(t.phase, TouchPhase::Started | TouchPhase::Moved | TouchPhase::Stationary) {
-                    let z = ((wp.x / g.w * 3.0) as i32).clamp(0, 2);
+                    let z = if g.sv.gyro { 1 } else { ((wp.x / g.w * 3.0) as i32).clamp(0, 2) };
                     g.zones[z as usize] = true;
                     match z {
                         0 => g.touch_dir -= 1.0,
@@ -4064,12 +4384,34 @@ async fn main() {
         }
 
         // ---- dibujo ----
+        let use_fx = g.sv.paper_fx && fx_mat.is_some();
+        if use_fx {
+            let (pw, ph) = ((sw * screen_dpi_scale()) as u32, (sh * screen_dpi_scale()) as u32);
+            if fx_rt.as_ref().map(|r| (r.texture.width() as u32, r.texture.height() as u32)) != Some((pw, ph)) {
+                let rt = render_target(pw.max(1), ph.max(1));
+                rt.texture.set_filter(FilterMode::Linear);
+                fx_rt = Some(rt);
+            }
+            set_camera(&Camera2D {
+                zoom: vec2(2.0 / sw, 2.0 / sh),
+                target: vec2(sw / 2.0, sh / 2.0),
+                render_target: fx_rt.clone(),
+                ..Default::default()
+            });
+        } else {
+            fx_rt = None;
+        }
         clear_background(hx("#2b2420"));
         g.btns.clear();
         pt.m = Affine2::from_scale(vec2(scale, scale));
         pt.ga = 1.0;
         pt.stack.clear();
+        let sharing = g.share_req && g.state == State::Over;
         match g.state {
+            _ if sharing => {
+                g.paint_world(&mut pt);
+                g.share_card(&mut pt);
+            }
             State::Menu => {
                 g.paper(&mut pt);
                 g.menu(&mut pt);
@@ -4110,8 +4452,34 @@ async fn main() {
             }
         }
 
-        g.toast_draw(&mut pt);
-        g.paint_banner(&mut pt);
+        if !sharing {
+            g.toast_draw(&mut pt);
+            g.paint_banner(&mut pt);
+        }
+        if let (true, Some(mat), Some(rt)) = (use_fx, fx_mat.as_ref(), fx_rt.as_ref()) {
+            set_default_camera();
+            mat.set_uniform("res", vec2(g.w, g.h));
+            mat.set_uniform("t", g.time);
+            mat.set_uniform("fy", 0.0f32);
+            gl_use_material(mat);
+            draw_texture_ex(&rt.texture, 0.0, 0.0, WHITE, DrawTextureParams { dest_size: Some(vec2(sw, sh)), flip_y: false, ..Default::default() });
+            gl_use_default_material();
+        }
+        if sharing {
+            g.share_req = false;
+            g.shutter = 1.0;
+            let mut img = get_screen_data();
+            match share_png(&mut img) {
+                Ok(p) if p.is_empty() => {}
+                Ok(p) => {
+                    let dir = std::path::Path::new(&p).parent().and_then(|d| d.file_name()).map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                    g.toast(&format!("imagen guardada en {}", dir));
+                }
+                Err(_) => g.toast("no se pudo compartir"),
+            }
+            g.snd("coin");
+        }
+        g.shutter = (g.shutter - dt * 2.5).max(0.0);
 
         // ---- sonido ----
         au.music_on = g.sv.music;
@@ -4154,7 +4522,7 @@ async fn main() {
                         g.state = State::Shop;
                         g.shop_tab = std::env::var("BUBU_TAB").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
                     }
-                    Ok("play") | Ok("over") => {
+                    Ok("play") | Ok("over") | Ok("share") => {
                         g.start();
                         g.score = 6000.0;
                         if let Some(i) = std::env::var("BUBU_WX").ok().and_then(|v| v.parse::<usize>().ok()) {
@@ -4171,9 +4539,10 @@ async fn main() {
                     }
                     _ => {}
                 }
-                if std::env::var("BUBU_STATE").as_deref() == Ok("over") {
+                if matches!(std::env::var("BUBU_STATE").as_deref(), Ok("over") | Ok("share")) {
                     g.game_over();
                     g.over_t = 2.0;
+                    g.share_req = std::env::var("BUBU_STATE").as_deref() == Ok("share");
                 }
             }
             if frames == 6 {

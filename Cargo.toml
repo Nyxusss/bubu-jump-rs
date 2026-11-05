@@ -10,10 +10,13 @@ path = "main.rs"
 [dependencies]
 macroquad = { version = "0.4", features = ["audio"] }
 libc = "0.2"
+# misma versión que usa macroquad: no agrega peso
+image = { version = "0.24", default-features = false, features = ["png"] }
 
 [profile.release]
-opt-level = 3
-lto = "thin"
+opt-level = "s"
+lto = true
+codegen-units = 1
 strip = true
 
 [package.metadata.android]
@@ -23,6 +26,10 @@ fullscreen = true
 res = "android_res"
 icon = "@mipmap/ic_launcher"
 build_targets = ["aarch64-linux-android"]
+
+[[package.metadata.android.permission]]
+name = "android.permission.WRITE_EXTERNAL_STORAGE"
+max_sdk_version = 28
 
 [package.metadata.android.activity_attributes]
 "android:screenOrientation" = "portrait"
