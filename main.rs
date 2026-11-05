@@ -843,6 +843,41 @@ mod droid {
     }
 }
 
+// dibuja la tarjeta en una textura de 720×1280 y la lee. No usa la pantalla:
+// en Android la pantalla tiene MSAA y copiarla da una imagen negra.
+fn render_share(g: &mut Game, pt: &mut Painter) -> Image {
+    let (cw, ch) = (BASE_W * 2.0, BASE_H * 2.0);
+    let rt = render_target(cw as u32, ch as u32);
+    rt.texture.set_filter(FilterMode::Linear);
+    set_camera(&Camera2D {
+        zoom: vec2(2.0 / cw, 2.0 / ch),
+        target: vec2(cw / 2.0, ch / 2.0),
+        render_target: Some(rt.clone()),
+        ..Default::default()
+    });
+    let (ow, oh) = (g.w, g.h);
+    g.w = BASE_W;
+    g.h = BASE_H;
+    // dos pasadas: la primera mete en el atlas de la fuente las letras grandes nuevas,
+    // que si no salen en blanco la primera vez
+    for _ in 0..2 {
+        clear_background(hx("#f8f0e3"));
+        pt.m = Affine2::from_scale(vec2(2.0, 2.0));
+        pt.ga = 1.0;
+        pt.stack.clear();
+        g.paper(pt);
+        g.share_card(pt);
+        unsafe {
+            get_internal_gl().flush();
+        }
+    }
+    g.w = ow;
+    g.h = oh;
+    let img = rt.texture.get_texture_data();
+    set_default_camera();
+    img
+}
+
 // guarda la captura y la comparte (Android) o la deja en Imágenes (PC)
 fn share_png(img: &mut Image) -> Result<String, ()> {
     for px in img.bytes.chunks_mut(4) {
@@ -865,14 +900,9 @@ fn share_png(img: &mut Image) -> Result<String, ()> {
     }
 }
 
-// como Image::export_png pero sin panic si falla (filas de abajo hacia arriba)
+// como Image::export_png pero sin panic si falla (la textura ya viene de arriba hacia abajo)
 fn write_png(img: &Image, path: &str) -> bool {
-    let row = img.width as usize * 4;
-    let mut out = Vec::with_capacity(img.bytes.len());
-    for r in img.bytes.chunks(row).rev() {
-        out.extend_from_slice(r);
-    }
-    image::save_buffer(path, &out, img.width as u32, img.height as u32, image::ColorType::Rgba8).is_ok()
+    image::save_buffer(path, &img.bytes, img.width as u32, img.height as u32, image::ColorType::Rgba8).is_ok()
 }
 
 fn save_path() -> std::path::PathBuf {
@@ -4406,12 +4436,7 @@ async fn main() {
         pt.m = Affine2::from_scale(vec2(scale, scale));
         pt.ga = 1.0;
         pt.stack.clear();
-        let sharing = g.share_req && g.state == State::Over;
         match g.state {
-            _ if sharing => {
-                g.paint_world(&mut pt);
-                g.share_card(&mut pt);
-            }
             State::Menu => {
                 g.paper(&mut pt);
                 g.menu(&mut pt);
@@ -4452,10 +4477,8 @@ async fn main() {
             }
         }
 
-        if !sharing {
-            g.toast_draw(&mut pt);
-            g.paint_banner(&mut pt);
-        }
+        g.toast_draw(&mut pt);
+        g.paint_banner(&mut pt);
         if let (true, Some(mat), Some(rt)) = (use_fx, fx_mat.as_ref(), fx_rt.as_ref()) {
             set_default_camera();
             mat.set_uniform("res", vec2(g.w, g.h));
@@ -4465,10 +4488,10 @@ async fn main() {
             draw_texture_ex(&rt.texture, 0.0, 0.0, WHITE, DrawTextureParams { dest_size: Some(vec2(sw, sh)), flip_y: false, ..Default::default() });
             gl_use_default_material();
         }
-        if sharing {
+        if g.share_req && g.state == State::Over {
             g.share_req = false;
             g.shutter = 1.0;
-            let mut img = get_screen_data();
+            let mut img = render_share(&mut g, &mut pt);
             match share_png(&mut img) {
                 Ok(p) if p.is_empty() => {}
                 Ok(p) => {
