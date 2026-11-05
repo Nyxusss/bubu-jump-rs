@@ -49,6 +49,25 @@ jobs:
       - name: Compilar APK
         run: cargo quad-apk build --release
 
+      # cargo-quad-apk guarda la .so sin comprimir: se recomprime y se vuelve a firmar
+      - name: Comprimir APK
+        run: |
+          set -e
+          BT="$ANDROID_SDK_ROOT/build-tools/35.0.0"
+          APK=$(ls target/android-artifacts/release/apk/*.apk)
+          ls -la "$APK"
+          rm -rf apkx && mkdir apkx
+          unzip -q "$APK" 'lib/*' -d apkx
+          cp "$APK" tmp.apk
+          zip -q -d tmp.apk 'lib/*' 'META-INF/*'
+          (cd apkx && zip -q -9 -r ../tmp.apk lib)
+          "$BT/zipalign" -P 16 -f 4 tmp.apk aligned.apk
+          "$BT/apksigner" sign --ks ~/.android/debug.keystore --ks-pass pass:android --key-pass pass:android aligned.apk
+          "$BT/apksigner" verify aligned.apk
+          mv aligned.apk "$APK"
+          rm -rf tmp.apk aligned.apk.idsig apkx
+          ls -la "$APK"
+
       - uses: actions/upload-artifact@v4
         with:
           name: bubu-jump-android
