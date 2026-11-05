@@ -27,6 +27,10 @@ res = "android_res"
 icon = "@mipmap/ic_launcher"
 build_targets = ["aarch64-linux-android"]
 
+# la librería va comprimida en el APK y Android la extrae al instalar
+[package.metadata.android.application_attributes]
+"android:extractNativeLibs" = "true"
+
 [[package.metadata.android.permission]]
 name = "android.permission.WRITE_EXTERNAL_STORAGE"
 max_sdk_version = 28
